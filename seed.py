@@ -137,6 +137,55 @@ CANDIDATES = [
     },
 ]
 
+# --------------------------------------------------------------------------- #
+# Seed data — Jobs
+# --------------------------------------------------------------------------- #
+
+JOBS = [
+    {
+        "title": "Backend Detective",
+        "required_skills": ["deduction", "pattern-recognition", "forensics"],
+        "min_experience": 3,
+        "culture_keywords": "analytical,autonomous",
+        "tagline": "We have a bug. We have no leads. We have you.",
+    },
+    {
+        "title": "Rapid Prototyping Engineer",
+        "required_skills": ["rapid-prototyping", "systems-design"],
+        "min_experience": 2,
+        "culture_keywords": "innovative,fast-paced",
+        "tagline": "Ship first, document never (kidding — please document).",
+    },
+    {
+        "title": "Developer Relations Lead",
+        "required_skills": ["public-speaking", "research"],
+        "min_experience": 2,
+        "culture_keywords": "energetic,curious",
+        "tagline": "Explain complex things to confused humans, cheerfully.",
+    },
+    {
+        "title": "Engineering Manager, Chaos Team",
+        "required_skills": ["team-building", "stakeholder-management", "leadership"],
+        "min_experience": 5,
+        "culture_keywords": "empathetic,organized",
+        "tagline": "Herd cats. The cats are senior engineers.",
+    },
+    {
+        "title": "Incident Commander",
+        "required_skills": ["crisis-management", "strategy", "negotiation"],
+        "min_experience": 4,
+        "culture_keywords": "decisive,calm-under-pressure",
+        "tagline": "3am page. You're the one who picks up.",
+    },
+    {
+        "title": "Sales Engineer",
+        "required_skills": ["sales", "public-speaking", "negotiation"],
+        "min_experience": 3,
+        "culture_keywords": "enthusiastic,persistent",
+        "tagline": "Sell the vision, then go build it.",
+    },
+]
+
 
 # --------------------------------------------------------------------------- #
 # Insertion helpers — raw SQL
@@ -155,3 +204,82 @@ def _upsert_skill(conn, name: str) -> int:
 def _candidate_exists(conn, name: str) -> bool:
     row = conn.execute("SELECT id FROM candidates WHERE name = ?", (name,)).fetchone()
     return row is not None
+
+
+def _job_exists(conn, title: str) -> bool:
+    row = conn.execute("SELECT id FROM jobs WHERE title = ?", (title,)).fetchone()
+    return row is not None
+
+
+def run_seed() -> dict:
+    """
+    Load all seed data idempotently (skips rows that already exist by name/title).
+    Returns counts of inserted candidates and jobs.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db.DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    inserted_candidates = 0
+    inserted_jobs = 0
+
+    try:
+        # ---- Candidates ----
+        for c in CANDIDATES:
+            if _candidate_exists(conn, c["name"]):
+                continue  # idempotent — skip
+
+            cur = conn.execute(
+                """
+                INSERT INTO candidates (name, experience_years, availability, traits, quirk)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (c["name"], c["experience_years"], c["availability"], c["traits"], c.get("quirk", "")),
+            )
+            candidate_id = cur.lastrowid
+
+            for skill_name in c["skills"]:
+                skill_id = _upsert_skill(conn, skill_name)
+                conn.execute(
+                    "INSERT OR IGNORE INTO candidate_skills (candidate_id, skill_id) VALUES (?, ?)",
+                    (candidate_id, skill_id),
+                )
+
+            inserted_candidates += 1
+
+        # ---- Jobs ----
+        for j in JOBS:
+            if _job_exists(conn, j["title"]):
+                continue  # idempotent — skip
+
+            cur = conn.execute(
+                """
+                INSERT INTO jobs (title, min_experience, culture_keywords, tagline)
+                VALUES (?, ?, ?, ?)
+                """,
+                (j["title"], j["min_experience"], j["culture_keywords"], j.get("tagline", "")),
+            )
+            job_id = cur.lastrowid
+
+            for skill_name in j["required_skills"]:
+                skill_id = _upsert_skill(conn, skill_name)
+                conn.execute(
+                    "INSERT OR IGNORE INTO job_required_skills (job_id, skill_id) VALUES (?, ?)",
+                    (job_id, skill_id),
+                )
+
+            inserted_jobs += 1
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+    return {"inserted_candidates": inserted_candidates, "inserted_jobs": inserted_jobs}
+
+
+if __name__ == "__main__":
+    db.init_db()
+    result = run_seed()
+    print(f"Seed complete: {result['inserted_candidates']} candidate(s), {result['inserted_jobs']} job(s) inserted.")
