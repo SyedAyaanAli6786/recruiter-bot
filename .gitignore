@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.env
+
+# SQLite runtime files
+*.db
+*.db-shm
+*.db-wal
+
+# Internal tooling
+task.md
+setup_git_history.py
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
