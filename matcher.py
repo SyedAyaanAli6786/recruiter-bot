@@ -11,6 +11,9 @@ Scoring breakdown (max 100 points):
   Trait / culture match  10 pts  |traits n culture_kw| / max_possible x 10
 
 Tie-breaking: alphabetical by candidate name (deterministic).
+
+The algorithm is intentionally transparent: every component is stored in the
+`breakdown` JSON column so callers can explain the score to users.
 """
 
 import json
@@ -70,7 +73,8 @@ def _get_job_required_skills(job_id: int) -> set[str]:
 
 def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: set[str]) -> dict:
     """
-    Compute the match score and return a result dict.
+    Compute the match score and return a rich result dict containing the
+    numeric score, a per-component breakdown, and a human-readable reason string.
     """
 
     # --- 1. Skill overlap (50 pts) ---
@@ -79,7 +83,7 @@ def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: s
         skill_score = round(len(matched) / len(job_skills) * 50, 2)
     else:
         matched = set()
-        skill_score = 50.0
+        skill_score = 50.0  # job has no requirements -> full marks
 
     # --- 2. Experience fit (30 pts) ---
     exp_gap = candidate["experience_years"] - job["min_experience"]
@@ -97,27 +101,40 @@ def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: s
     avail = candidate.get("availability", "not_looking")
     avail_score = _AVAILABILITY_SCORE.get(avail, 0)
 
-    total = round(skill_score + exp_score + avail_score, 2)
+    # --- 4. Trait / culture match (10 pts) ---
+    candidate_traits = {t.strip().lower() for t in candidate["traits"].split(",") if t.strip()}
+    culture_kw       = {k.strip().lower() for k in job["culture_keywords"].split(",") if k.strip()}
+    trait_overlap    = candidate_traits & culture_kw
+    max_possible     = max(len(culture_kw), 1)
+    trait_score      = round(len(trait_overlap) / max_possible * 10, 2)
 
-    reason = (
-        f"Matched {len(matched)}/{len(job_skills)} required skill(s). "
-        f"{candidate['experience_years']} yr(s) experience (min {job['min_experience']}) — {exp_label}. "
-        f"Availability: {avail.replace('_', ' ')} ({avail_score}/10 pts)."
-    )
+    total = round(skill_score + exp_score + avail_score + trait_score, 2)
+
+    # --- Reason string ---
+    matched_sorted = sorted(matched) if matched else []
+    reason_parts = [
+        f"Matched {len(matched)}/{len(job_skills)} required skill(s)"
+        + (f" ({', '.join(matched_sorted)})" if matched_sorted else "") + ".",
+        f"{candidate['experience_years']} yr(s) experience (min {job['min_experience']}) — {exp_label}.",
+        f"Availability: {avail.replace('_', ' ')} ({avail_score}/10 pts).",
+        f"Culture/trait overlap: {len(trait_overlap)}/{len(culture_kw)} keyword(s)"
+        + (f" ({', '.join(sorted(trait_overlap))})" if trait_overlap else "") + ".",
+    ]
+    reason = " ".join(reason_parts)
 
     breakdown = {
-        "skill_overlap":  {"score": skill_score, "matched": sorted(matched), "required": sorted(job_skills)},
-        "experience_fit": {"score": exp_score, "candidate_yrs": candidate["experience_years"],
-                            "min_required": job["min_experience"], "note": exp_label},
-        "availability":   {"score": avail_score, "status": avail},
+        "skill_overlap":    {"score": skill_score,  "matched": sorted(matched),  "required": sorted(job_skills)},
+        "experience_fit":   {"score": exp_score,     "candidate_yrs": candidate["experience_years"], "min_required": job["min_experience"], "note": exp_label},
+        "availability":     {"score": avail_score,   "status": avail},
+        "trait_culture":    {"score": trait_score,   "matched_keywords": sorted(trait_overlap), "culture_keywords": sorted(culture_kw)},
     }
 
     return {
-        "candidate_id":   candidate["id"],
+        "candidate_id":  candidate["id"],
         "candidate_name": candidate["name"],
-        "job_id":         job["id"],
-        "job_title":      job["title"],
-        "score":          total,
-        "breakdown":      breakdown,
-        "reason":         reason,
+        "job_id":        job["id"],
+        "job_title":     job["title"],
+        "score":         total,
+        "breakdown":     breakdown,
+        "reason":        reason,
     }
