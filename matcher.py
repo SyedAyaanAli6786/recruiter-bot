@@ -138,3 +138,106 @@ def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: s
         "breakdown":     breakdown,
         "reason":        reason,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Public API
+# --------------------------------------------------------------------------- #
+
+def compute_all_matches() -> int:
+    """
+    Compute (or recompute) scores for every (candidate, job) pair and upsert
+    into the matches table.  Returns the number of pairs processed.
+    """
+    candidates = _get_all_candidates()
+    jobs       = _get_all_jobs()
+    now        = datetime.now(timezone.utc).isoformat()
+    count      = 0
+
+    for candidate in candidates:
+        c_skills = _get_candidate_skills(candidate["id"])
+        for job in jobs:
+            j_skills = _get_job_required_skills(job["id"])
+            result   = _score(candidate, job, c_skills, j_skills)
+
+            db.execute(
+                """
+                INSERT INTO matches (candidate_id, job_id, score, breakdown, reason, computed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (candidate_id, job_id)
+                DO UPDATE SET
+                    score       = excluded.score,
+                    breakdown   = excluded.breakdown,
+                    reason      = excluded.reason,
+                    computed_at = excluded.computed_at
+                """,
+                (
+                    result["candidate_id"],
+                    result["job_id"],
+                    result["score"],
+                    json.dumps(result["breakdown"]),
+                    result["reason"],
+                    now,
+                ),
+            )
+            count += 1
+
+    return count
+
+
+def get_matches_for_job(job_id: int) -> list[dict]:
+    """
+    Return candidates ranked for a given job, highest score first.
+    Tie-break: alphabetical candidate name (ascending).
+    """
+    rows = db.fetchall(
+        """
+        SELECT
+            m.score,
+            m.breakdown,
+            m.reason,
+            m.computed_at,
+            c.id   AS candidate_id,
+            c.name AS candidate_name,
+            c.experience_years,
+            c.availability,
+            c.traits
+        FROM   matches m
+        JOIN   candidates c ON c.id = m.candidate_id
+        WHERE  m.job_id = ?
+        ORDER  BY m.score DESC, c.name ASC
+        """,
+        (job_id,),
+    )
+    for r in rows:
+        r["breakdown"] = json.loads(r["breakdown"])
+    return rows
+
+
+def get_matches_for_candidate(candidate_id: int) -> list[dict]:
+    """
+    Return jobs ranked for a given candidate, highest score first.
+    Tie-break: alphabetical job title (ascending).
+    """
+    rows = db.fetchall(
+        """
+        SELECT
+            m.score,
+            m.breakdown,
+            m.reason,
+            m.computed_at,
+            j.id      AS job_id,
+            j.title   AS job_title,
+            j.min_experience,
+            j.culture_keywords,
+            j.tagline
+        FROM   matches m
+        JOIN   jobs j ON j.id = m.job_id
+        WHERE  m.candidate_id = ?
+        ORDER  BY m.score DESC, j.title ASC
+        """,
+        (candidate_id,),
+    )
+    for r in rows:
+        r["breakdown"] = json.loads(r["breakdown"])
+    return rows
