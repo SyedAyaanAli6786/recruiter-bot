@@ -65,13 +65,12 @@ def _get_job_required_skills(job_id: int) -> set[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Core scoring function (skill overlap only — WIP)
+# Core scoring function
 # --------------------------------------------------------------------------- #
 
 def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: set[str]) -> dict:
     """
-    Compute the match score between a candidate and a job.
-    Returns a result dict with score and breakdown.
+    Compute the match score and return a result dict.
     """
 
     # --- 1. Skill overlap (50 pts) ---
@@ -80,9 +79,38 @@ def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: s
         skill_score = round(len(matched) / len(job_skills) * 50, 2)
     else:
         matched = set()
-        skill_score = 50.0  # job has no requirements -> full marks
+        skill_score = 50.0
 
-    total = skill_score
+    # --- 2. Experience fit (30 pts) ---
+    exp_gap = candidate["experience_years"] - job["min_experience"]
+    if exp_gap >= 0:
+        exp_score = 30.0
+        exp_label = "meets requirement"
+    elif exp_gap == -1:
+        exp_score = 15.0
+        exp_label = "1 year below minimum (partial credit)"
+    else:
+        exp_score = 0.0
+        exp_label = f"{abs(exp_gap)} years below minimum"
+
+    # --- 3. Availability (10 pts) ---
+    avail = candidate.get("availability", "not_looking")
+    avail_score = _AVAILABILITY_SCORE.get(avail, 0)
+
+    total = round(skill_score + exp_score + avail_score, 2)
+
+    reason = (
+        f"Matched {len(matched)}/{len(job_skills)} required skill(s). "
+        f"{candidate['experience_years']} yr(s) experience (min {job['min_experience']}) — {exp_label}. "
+        f"Availability: {avail.replace('_', ' ')} ({avail_score}/10 pts)."
+    )
+
+    breakdown = {
+        "skill_overlap":  {"score": skill_score, "matched": sorted(matched), "required": sorted(job_skills)},
+        "experience_fit": {"score": exp_score, "candidate_yrs": candidate["experience_years"],
+                            "min_required": job["min_experience"], "note": exp_label},
+        "availability":   {"score": avail_score, "status": avail},
+    }
 
     return {
         "candidate_id":   candidate["id"],
@@ -90,8 +118,6 @@ def _score(candidate: dict, job: dict, candidate_skills: set[str], job_skills: s
         "job_id":         job["id"],
         "job_title":      job["title"],
         "score":          total,
-        "breakdown":      {
-            "skill_overlap": {"score": skill_score, "matched": sorted(matched), "required": sorted(job_skills)},
-        },
-        "reason": f"Matched {len(matched)}/{len(job_skills)} required skill(s).",
+        "breakdown":      breakdown,
+        "reason":         reason,
     }
