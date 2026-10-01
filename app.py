@@ -117,5 +117,78 @@ def candidate_matches(candidate_id: int):
     })
 
 
+# --------------------------------------------------------------------------- #
+# Jobs
+# --------------------------------------------------------------------------- #
+
+@app.get("/jobs")
+def list_jobs():
+    """List all jobs with their required skills."""
+    jobs = db.fetchall(
+        "SELECT id, title, min_experience, culture_keywords, tagline FROM jobs ORDER BY id"
+    )
+    for j in jobs:
+        skills = db.fetchall(
+            """
+            SELECT s.name
+            FROM   job_required_skills jrs
+            JOIN   skills s ON s.id = jrs.skill_id
+            WHERE  jrs.job_id = ?
+            ORDER  BY s.name
+            """,
+            (j["id"],),
+        )
+        j["required_skills"] = [s["name"] for s in skills]
+    return jsonify(jobs)
+
+
+@app.get("/jobs/<int:job_id>")
+def get_job(job_id: int):
+    """Get a single job by id."""
+    j = db.fetchone(
+        "SELECT id, title, min_experience, culture_keywords, tagline FROM jobs WHERE id = ?",
+        (job_id,),
+    )
+    if not j:
+        abort(404, description=f"Job {job_id} not found.")
+    skills = db.fetchall(
+        """
+        SELECT s.name
+        FROM   job_required_skills jrs
+        JOIN   skills s ON s.id = jrs.skill_id
+        WHERE  jrs.job_id = ?
+        ORDER  BY s.name
+        """,
+        (job_id,),
+    )
+    j["required_skills"] = [s["name"] for s in skills]
+    return jsonify(j)
+
+
+@app.get("/jobs/<int:job_id>/matches")
+def job_matches(job_id: int):
+    """
+    Return all candidates ranked for a job (highest score first).
+    Run POST /matches/compute first if the matches table is empty.
+    """
+    if not db.fetchone("SELECT id FROM jobs WHERE id = ?", (job_id,)):
+        abort(404, description=f"Job {job_id} not found.")
+
+    results = matcher.get_matches_for_job(job_id)
+    if not results:
+        return jsonify({
+            "message": "No match data found. Run POST /matches/compute first.",
+            "job_id": job_id,
+            "matches": [],
+        }), 200
+
+    j = db.fetchone("SELECT title FROM jobs WHERE id = ?", (job_id,))
+    return jsonify({
+        "job_id": job_id,
+        "job_title": j["title"] if j else None,
+        "matches": results,
+    })
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
