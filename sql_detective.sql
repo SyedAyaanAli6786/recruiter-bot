@@ -85,3 +85,75 @@ SELECT
 FROM   applicant_jobs
 WHERE  distinct_jobs_applied > 1
 ORDER  BY distinct_jobs_applied DESC, canonical_name;
+
+
+-- ------------------------------------------------------------
+-- Q4: For each recruiter, compute their Final-stage conversion
+--     rate (passed / total Final-stage interviews), but only
+--     include recruiters with at least 3 Final-stage interviews.
+-- ------------------------------------------------------------
+
+SELECT
+    r.id             AS recruiter_id,
+    r.name           AS recruiter_name,
+    r.region,
+    COUNT(i.id)                                          AS total_final_interviews,
+    SUM(CASE WHEN i.outcome = 'passed' THEN 1 ELSE 0 END) AS passed_finals,
+    ROUND(
+        1.0 * SUM(CASE WHEN i.outcome = 'passed' THEN 1 ELSE 0 END)
+            / COUNT(i.id),
+        4
+    )                                                    AS conversion_rate
+FROM   recruiters   r
+JOIN   job_postings jp ON jp.recruiter_id = r.id
+JOIN   interviews   i  ON i.job_posting_id = jp.id
+                      AND i.stage = 'Final'
+GROUP  BY r.id, r.name, r.region
+HAVING COUNT(i.id) >= 3
+ORDER  BY conversion_rate DESC;
+
+
+-- ------------------------------------------------------------
+-- Q5 (Bonus): Using a window function, find the recruiter with
+--     the most successful placements (passed at Final stage)
+--     per department.
+--
+--     "Most successful" = highest count of passed Final-stage
+--     interviews within each department.
+--     RANK() is used so ties both appear (RANK 1 = winner(s)).
+-- ------------------------------------------------------------
+
+WITH placements AS (
+    -- Count passed-Final interviews per recruiter x department
+    SELECT
+        r.id             AS recruiter_id,
+        r.name           AS recruiter_name,
+        jp.department,
+        COUNT(i.id)      AS passed_placements
+    FROM   recruiters   r
+    JOIN   job_postings jp ON jp.recruiter_id = r.id
+    JOIN   interviews   i  ON i.job_posting_id = jp.id
+                          AND i.stage   = 'Final'
+                          AND i.outcome = 'passed'
+    GROUP  BY r.id, r.name, jp.department
+),
+ranked AS (
+    SELECT
+        department,
+        recruiter_id,
+        recruiter_name,
+        passed_placements,
+        RANK() OVER (
+            PARTITION BY department
+            ORDER BY passed_placements DESC
+        ) AS dept_rank
+    FROM placements
+)
+SELECT
+    department,
+    recruiter_name,
+    passed_placements,
+    dept_rank
+FROM   ranked
+WHERE  dept_rank = 1
+ORDER  BY department, recruiter_name;
