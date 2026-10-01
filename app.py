@@ -54,7 +54,6 @@ def list_candidates():
         ORDER  BY name
         """
     )
-    # Attach skill list to each candidate via a raw JOIN query
     for c in candidates:
         skills = db.fetchall(
             """
@@ -91,6 +90,31 @@ def get_candidate(candidate_id: int):
     )
     c["skills"] = [s["name"] for s in skills]
     return jsonify(c)
+
+
+@app.get("/candidates/<int:candidate_id>/matches")
+def candidate_matches(candidate_id: int):
+    """
+    Return all jobs ranked for a candidate (highest score first).
+    Run POST /matches/compute first if the matches table is empty.
+    """
+    if not db.fetchone("SELECT id FROM candidates WHERE id = ?", (candidate_id,)):
+        abort(404, description=f"Candidate {candidate_id} not found.")
+
+    results = matcher.get_matches_for_candidate(candidate_id)
+    if not results:
+        return jsonify({
+            "message": "No match data found. Run POST /matches/compute first.",
+            "candidate_id": candidate_id,
+            "matches": [],
+        }), 200
+
+    c = db.fetchone("SELECT name FROM candidates WHERE id = ?", (candidate_id,))
+    return jsonify({
+        "candidate_id": candidate_id,
+        "candidate_name": c["name"] if c else None,
+        "matches": results,
+    })
 
 
 if __name__ == "__main__":
