@@ -1,7 +1,7 @@
 """
 app.py — Flask REST API for Recruiter Bot.
 
-Endpoints (planned):
+Endpoints:
   GET  /                         Health check
   GET  /candidates               List all candidates
   GET  /candidates/<id>          Get one candidate
@@ -15,8 +15,10 @@ Endpoints (planned):
 Raw SQL only — no ORM.
 """
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, abort
 import db
+import matcher
+import seed as seed_module
 
 app = Flask(__name__)
 
@@ -36,6 +38,59 @@ with app.app_context():
 @app.get("/")
 def health():
     return jsonify({"status": "ok", "service": "recruiter-bot"})
+
+
+# --------------------------------------------------------------------------- #
+# Candidates
+# --------------------------------------------------------------------------- #
+
+@app.get("/candidates")
+def list_candidates():
+    """List all candidates with their skills."""
+    candidates = db.fetchall(
+        """
+        SELECT id, name, experience_years, availability, traits, quirk
+        FROM   candidates
+        ORDER  BY name
+        """
+    )
+    # Attach skill list to each candidate via a raw JOIN query
+    for c in candidates:
+        skills = db.fetchall(
+            """
+            SELECT s.name
+            FROM   candidate_skills cs
+            JOIN   skills s ON s.id = cs.skill_id
+            WHERE  cs.candidate_id = ?
+            ORDER  BY s.name
+            """,
+            (c["id"],),
+        )
+        c["skills"] = [s["name"] for s in skills]
+    return jsonify(candidates)
+
+
+@app.get("/candidates/<int:candidate_id>")
+def get_candidate(candidate_id: int):
+    """Get a single candidate by id."""
+    c = db.fetchone(
+        "SELECT id, name, experience_years, availability, traits, quirk FROM candidates WHERE id = ?",
+        (candidate_id,),
+    )
+    if not c:
+        abort(404, description=f"Candidate {candidate_id} not found.")
+    skills = db.fetchall(
+        """
+        SELECT s.name
+        FROM   candidate_skills cs
+        JOIN   skills s ON s.id = cs.skill_id
+        WHERE  cs.candidate_id = ?
+        ORDER  BY s.name
+        """,
+        (candidate_id,),
+    )
+    c["skills"] = [s["name"] for s in skills]
+    return jsonify(c)
 
 
 if __name__ == "__main__":
