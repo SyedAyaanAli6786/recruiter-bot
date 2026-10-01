@@ -54,6 +54,7 @@ def list_candidates():
         ORDER  BY name
         """
     )
+    # Attach skill list to each candidate via a raw JOIN query
     for c in candidates:
         skills = db.fetchall(
             """
@@ -98,6 +99,7 @@ def candidate_matches(candidate_id: int):
     Return all jobs ranked for a candidate (highest score first).
     Run POST /matches/compute first if the matches table is empty.
     """
+    # Verify candidate exists
     if not db.fetchone("SELECT id FROM candidates WHERE id = ?", (candidate_id,)):
         abort(404, description=f"Candidate {candidate_id} not found.")
 
@@ -188,6 +190,47 @@ def job_matches(job_id: int):
         "job_title": j["title"] if j else None,
         "matches": results,
     })
+
+
+# --------------------------------------------------------------------------- #
+# Seed + compute
+# --------------------------------------------------------------------------- #
+
+@app.post("/seed")
+def seed():
+    """Load all seed data (idempotent — safe to call multiple times)."""
+    result = seed_module.run_seed()
+    return jsonify({
+        "status": "ok",
+        "inserted_candidates": result["inserted_candidates"],
+        "inserted_jobs": result["inserted_jobs"],
+        "message": "Seed complete. Run POST /matches/compute to score matches.",
+    })
+
+
+@app.post("/matches/compute")
+def compute_matches():
+    """(Re-)compute all match scores for every (candidate, job) pair."""
+    count = matcher.compute_all_matches()
+    return jsonify({
+        "status": "ok",
+        "pairs_computed": count,
+        "message": f"Computed {count} match pair(s). Scores are now queryable.",
+    })
+
+
+# --------------------------------------------------------------------------- #
+# Error handlers
+# --------------------------------------------------------------------------- #
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": str(e)}), 404
+
+
+@app.errorhandler(400)
+def bad_request(e):
+    return jsonify({"error": str(e)}), 400
 
 
 if __name__ == "__main__":
